@@ -1,0 +1,199 @@
+Command Line:
+---------------
+
+The below account is assumed to be on AWS:
+
+    snowsql -g <account-id> -u <userid>
+
+---------------
+Basic Commands
+---------------
+
+Create a virtual warehouse:
+    CREATE OR REPLACE WAREHOUSE mywh;
+
+Switching to the newly created warehouse: 
+    USE WAREHOUSE mywh;
+
+Creating a database:
+    CREATE OR REPLACE DATABASE mydb;
+
+Switching to the newly created database:
+    USE DATABASE mydb;
+    
+Creating a schema:
+    CREATE OR REPLACE SCHEMA myschema;
+
+Switching to the newly created schema:
+    USE SCHEMA myschema;
+
+Listing schemas:
+    SHOW SCHEMAS;
+
+--------------
+Data Loading
+--------------
+
+    Creating a raw source table:
+
+        CREATE OR REPLACE TABLE raw_src_tbl
+            ( src VARIANT );
+
+    Creating an internal stage table
+
+            There are the following two options:
+
+                1. Using file_format TYPE paramteter:
+                    CREATE OR REPLACE STAGE raw_data_stg
+                    file_format = (type = 'JSON');
+
+                2. Using only the file_format parameter:
+
+                    a. Create the file_format first
+
+                        CREATE OR REPLACE FILE FORMAT my_json_format
+                        TYPE = 'JSON'
+                        RECORD_DELIMITER='\\n'
+                        FIELD_DELIMITER=',';
+
+                    b. Create the staging table with this file format.
+
+                        CREATE OR REPLACE STAGE raw_data_stg
+                        file_format = my_json_format;
+
+
+    Loading the stage table with the raw data
+
+        PUT file:///home/prashant/snowflake/sales.json @raw_data_stg
+
+    Copying the data from stage to target
+
+        COPY INTO raw_src_tbl
+        from @raw_data_stg;
+
+-----------------
+Quering the data
+-----------------
+
+    The entire json data will be stored in the VARIANT data type.
+
+        SELECT SUBSTR(src:location:state_city::string,1,2) AS state,
+               SUBSTR(src:location:state_city::string,4) AS city, 
+               src:location:zip::string as zip,
+               src:price::number price,
+               TO_TIMESTAMP_NTZ(src:sale_date::string) sale_date
+        FROM raw_src_tbl;
+
+---------------------------
+Snowflake specific examples
+---------------------------
+
+    FLATTEN:
+          Explodes (flattens) compound values into multiple rows.
+      It is a table function that takes a VARIANT, OBJECT, ARRAY column and produces a lateral view( an inline view that contains correlatio referring to the tables that precede it in the FROM clause).
+
+      It is used to convert a semi-structured data into a relational representation.
+
+    Use the same staging table as above.
+
+    Load the contents of the contacts.json into the above staging table.
+
+        PUT file://./contacts.json @raw_data_stg;
+
+    Copy the contents of the staging table into the target table created above.
+
+        COPY INTO raw_src_tbl FROM @raw_data_stg;
+
+    Querying the data:
+
+    Snowflake SQL supports many Oracle-Like functions and syntax, example below:
+
+        SELECT * FROM
+        (
+        SELECT src:id::number id, 
+           src:name:first::string first_name, 
+           c.value:type::string type,
+           c.value:content::string content
+        FROM raw_src_tbl s, 
+         lateral flatten(input => src, path => 'contact') m,
+         lateral flatten (input => m.value:business) c
+        )
+        PIVOT (max(content) for type IN ('phone','email')) as p(id,first_name, phone, email);
+
+
+
+-------------------------
+Sharing Database and Data
+--------------------------
+
+Preparing the data to be shared as a producer:
+
+    USE WAREHOUSE MY_WH;
+
+    USE DATABASE mydb;
+
+    USE SCHEMA myschema;
+
+    CREATE OR REPLACE FILE FORMAT my_csv_format
+    TYPE='CSV'
+    RECORD_DELIMITER='\\n'
+    FIELD_DELIMITER='|'
+    TRIM_SPACE=FALSE
+    NULL_IF = ('NULL','null','','          ');
+
+
+    CREATE OR REPLACE STAGE stg_data_csv
+    file_format = my_csv_format;
+
+    PUT file://./departments.csv @stg_data_csv;
+
+    CREATE OR REPLACE TABLE departments
+    (department_id INT, department_name STRING, manager_id INT, location_id INT );
+
+    LIST @stg_data_csv;
+
+    COPY INTO departments FROM @stg_data_csv/departments.csv.gz;
+
+Creating Reader Account:
+
+    USE ROLE ACCOUNTADMIN;
+
+    CREATE MANAGED ACCOUNT reader_acct ADMIN_NAME=<name> ADMIN_PASSWORD='<password>' TYPE = READER;
+
+Creating a Share:
+
+    USE ROLE ACCOUNTADMIN;
+
+    CREATE OR REPLACE SHARE mydb_share COMMENT = 'share to distrubute data';
+
+    GRANT USAGE ON DATABASE mydb TO SHARE mydb_share;
+
+    GRANT USAGE ON SCHEMA mydb.myschema TO SHARE mydb_share;
+
+    GRANT SELECT ON mydb.myschema.departments TO SHARE mydb_share;
+
+    ALTER SHARE mydb_share SET ACCOUNTS = <acct_name>;
+
+Preparing reader-account to consume departments' data:
+
+    Login as reader-account using snowsql
+
+    USE ROLE ACCOUNTADMIN;
+
+    SHOW SHARES;
+
+    CREATE DATABASE my_consumer_db FROM SHARE <provider_account>.mydb_share;
+
+    GRANT IMPORTED PRIVILEGES ON DATABASE my_consumer_db TO sysadmin;
+
+    USE ROLE sysadmin;
+
+    CREATE OR REPLACE WAREHOUSE reader_wh_new;
+
+    USE reader_wh_new;
+
+    USE DATABASE my_consumer_db;
+
+    SELECT * FROM myschema.departments;
+
+
