@@ -3,14 +3,18 @@ Command Line:
 
 The below account is assumed to be on AWS:
 
-    snowsql -g <account-id> -u <userid>
+    snowsql -a <account-id> -u <userid>
 
 ---------------
 Basic Commands
 ---------------
 
 Create a virtual warehouse:
-    CREATE OR REPLACE WAREHOUSE mywh;
+    CREATE OR REPLACE WAREHOUSE mywh
+      WAREHOUSE_SIZE='X-SMALL'
+      AUTO_SUSPEND = 180
+      AUTO_RESUME = TRUE
+      INITIALLY_SUSPENDED=TRUE;
 
 Switching to the newly created warehouse: 
     USE WAREHOUSE mywh;
