@@ -68,7 +68,7 @@ Data Loading
 
     Loading the stage table with the raw data
 
-        PUT file:///home/prashant/snowflake/sales.json @raw_data_stg
+        PUT file://./sales.json @raw_data_stg
 
     Copying the data from stage to target
 
@@ -78,6 +78,8 @@ Data Loading
 -----------------
 Quering the data
 -----------------
+
+        SELECT * FROM raw_src_tbl;
 
     The entire json data will be stored in the VARIANT data type.
 
