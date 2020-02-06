@@ -1,0 +1,63 @@
+use role accountadmin;
+
+CREATE ROLE Data_Science;
+
+GRANT USAGE ON WAREHOUSE compute_wh to data_science;
+GRANT USAGE ON WAREHOUSE compute_wh to developer;
+GRANT MONITOR on warehouse COMPUTE_WH to role DEVELOPER;
+GRANT MONITOR on warehouse COMPUTE_WH to role data_science;
+
+CREATE USER ds_1 PASSWORD = '****' LOGIN_NAME = ds_1 DEFAULT_ROLE = data_science
+DEFAULT_WAREHOUSE = 'compute_wh' MUST_CHANGE_PASSWORD = false;
+
+CREATE USER dev_1 PASSWORD = '****' LOGIN_NAME = dev_1 DEFAULT_ROLE = developer
+DEFAULT_WAREHOUSE = 'compute_wh' MUST_CHANGE_PASSWORD = false;
+
+GRANT ROLE data_science to USER ds_1;
+GRANT ROLE developer to USER dev_1;
+GRANT USAGE ON schema PUBLIC to role developer;
+
+CREATE OR REPLACE FILE FORMAT pipe_file_format
+COMPRESSION = 'AUTO' 
+FIELD_DELIMITER = '|' 
+RECORD_DELIMITER = '\n' 
+SKIP_HEADER = 1 
+FIELD_OPTIONALLY_ENCLOSED_BY = 'NONE' 
+TRIM_SPACE = FALSE 
+ERROR_ON_COLUMN_COUNT_MISMATCH = TRUE 
+ESCAPE = 'NONE' 
+ESCAPE_UNENCLOSED_FIELD = '\134' 
+DATE_FORMAT = 'AUTO' 
+TIMESTAMP_FORMAT = 'AUTO' 
+NULL_IF = ('\\N');
+
+CREATE OR REPLACE STAGE stage_internal FILE_FORMAT= (FORMAT_NAME=pipe_file_format);
+
+put file://./dataFeb-5-2020.csv @stage_internal;
+
+ls @stage_internal;
+
+CREATE or replace TABLE 
+customer (
+            customer_id STRING,
+            customer_name STRING,
+            customer_email STRING,
+            customer_city STRING,
+            customer_dob DATE
+);
+
+GRANT SELECT ON customer TO ROLE public;
+
+COPY INTO customer (customer_id,
+                customer_name,
+                customer_email,
+                customer_city,
+                customer_dob)
+FROM ( SELECT t.$1, t.$2, t.$3, t.$4, to_Date(t.$5) FROM @stage_internal t);
+
+SELECT * FROM customer;
+
+GRANT SELECT ON customer TO ROLE data_science;
+GRANT SELECT ON customer TO ROLE DEVELOPER;
+
+
