@@ -65,7 +65,15 @@ CLUSTERING
 
 CREATE OR REPLACE WAREHOUSE performance_test warehouse_size = LARGE;
 
-use performance_test;
+CREATE OR REPLACE DATABASE performance_db;
+
+CREATE OR REPLACE SCHEMA perf;
+
+use warehouse performance_test;
+
+USE database performance_db;
+
+USE schema perf;
 
 CREATE OR REPLACE TABLE transactions 
 (transaction_dt DATE, transaction_id INTEGER, customer_id INTEGER, amount INTEGER);
@@ -79,6 +87,8 @@ as select a.transaction_dt + mod(random(), 2000), random(), a.customer_id, a.amo
 from transactions a cross join transactions b cross join transactions c cross join transactions d;
 
 select count(*) from transactions_large where transaction_dt = date '2018-12-18';
+
+select count(*) from transactions_large where transaction_dt = date '2020-03-03';
 
 CREATE OR REPLACE table transactions_clustered_large (transaction_dt, transaction_id, customer_id, amount )
 cluster by (transaction_dt)
@@ -102,5 +112,9 @@ select count(*) from transactions_large where date_trunc('MONTH', transaction_dt
 
 select count(*) from transactions_clustered_large where date_trunc('MONTH', transaction_dt) = date '2018-12-01';
  
+DROP SCHEMA perf;
 
+DROP DATABASE performance_db;
+
+DROP warehouse performance_test;
 
