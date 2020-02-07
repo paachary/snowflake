@@ -60,4 +60,47 @@ SELECT * FROM customer;
 GRANT SELECT ON customer TO ROLE data_science;
 GRANT SELECT ON customer TO ROLE DEVELOPER;
 
+-------------------------------------------------------------
+CLUSTERING
+
+CREATE OR REPLACE WAREHOUSE performance_test warehouse_size = LARGE;
+
+use performance_test;
+
+CREATE OR REPLACE TABLE transactions 
+(transaction_dt DATE, transaction_id INTEGER, customer_id INTEGER, amount INTEGER);
+
+CREATE OR REPLACE STAGE s3_perf_stage URL = 's3://snowflake-essentials/streaming_data_ingest/Transactions';
+
+COPY INTO transactions FROM @s3_perf_stage file_format = (type=csv field_delimiter='|' skip_header=1);
+
+CREATE OR REPLACE table transactions_large (transaction_dt, transaction_id, customer_id, amount )
+as select a.transaction_dt + mod(random(), 2000), random(), a.customer_id, a.amount
+from transactions a cross join transactions b cross join transactions c cross join transactions d;
+
+select count(*) from transactions_large where transaction_dt = date '2018-12-18';
+
+CREATE OR REPLACE table transactions_clustered_large (transaction_dt, transaction_id, customer_id, amount )
+cluster by (transaction_dt)
+as select a.transaction_dt + mod(random(), 2000), random(), a.customer_id, a.amount
+from transactions a cross join transactions b cross join transactions c cross join transactions d;
+
+select count(*) from transactions_clustered_large where transaction_dt = date '2018-12-18';
+
+select count(*) from transactions_large where transaction_dt between date '2018-12-01' and date '2018-12-31';
+
+select count(*) from transactions_clustered_large where transaction_dt between date '2018-12-01' and date '2018-12-31';
+
+CREATE OR REPLACE table transactions_clustered_xprs (transaction_dt DATE, transaction_id INT, customer_id INT, amount INT)
+cluster by ( date_trunc('MONTH', transaction_dt))
+as select transaction_dt, transaction_id, customer_id, amount
+from transactions_clustered_large;
+
+select count(*) from transactions_clustered_xprs where date_trunc('MONTH', transaction_dt) = date '2018-12-01';
+
+select count(*) from transactions_large where date_trunc('MONTH', transaction_dt) = date '2018-12-01';
+
+select count(*) from transactions_clustered_large where date_trunc('MONTH', transaction_dt) = date '2018-12-01';
+ 
+
 
