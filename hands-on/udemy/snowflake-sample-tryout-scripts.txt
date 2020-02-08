@@ -118,3 +118,52 @@ DROP DATABASE performance_db;
 
 DROP warehouse performance_test;
 
+--------------------------------------------------
+Time travel
+
+alter session set timezone = 'UTC';
+
+create or replace database timetraveldb;
+
+use database timetraveldb;
+
+create or replace schema timetravel;
+
+use schema timetravel;
+
+create table customer 
+( name STRING, email STRING, job STRING, phone STRING, age NUMBER);
+
+create or replace file format csv_file_format type = csv field_delimiter='|' skip_header=1;
+
+create or replace stage s3_stage URL='s3://snowflake-essentials/' file_format =  (format_name = csv_file_format);
+
+copy into customer from @s3_stage/sample_data_for_cloned_timetravel.csv ;
+
+select * from customer;
+
+select current_timestamp;
+-- z
+
+update customer set job = 'My Job';
+--stmtid = abc
+
+select * from customer at(timestamp => z::timestamp);
+
+select * from customer before(timestamp => z+1::timestamp);
+
+select * from customer at(offset => -60*30);
+
+select * from customer before(statement => 'abc');
+
+create table restored_customer clone customer before(timestamp => z+1::timestamp); 
+
+show tables history like '%CUSTOMER%' in TIMETRAVELDB.TIMETRAVEL;
+-- assume customer table had been dropped earlier. The above command will show two records for customer, with the dropped_on column for one of the records having the 
+-- date when the table was dropped.
+
+alter table customer rename to customer_latest;
+
+undrop table customer;
+
+
