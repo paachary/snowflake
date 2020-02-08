@@ -166,4 +166,6 @@ alter table customer rename to customer_latest;
 
 undrop table customer;
 
+DROP database timetraveldb;
 
+DROP schema timetravel;
