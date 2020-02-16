@@ -1,6 +1,7 @@
 use role accountadmin;
 
 CREATE ROLE Data_Science;
+CREATE ROLE developer;
 
 GRANT USAGE ON WAREHOUSE compute_wh to data_science;
 GRANT USAGE ON WAREHOUSE compute_wh to developer;
@@ -169,3 +170,130 @@ undrop table customer;
 DROP database timetraveldb;
 
 DROP schema timetravel;
+
+-----------------------------------------------------------------------------
+-- Setting up access between S3 and snowflake for external storage
+
+1. Create s3 bucket
+2. Configure access permissions for the s3 bucket
+        
+    s3:GetObject
+
+    s3:GetObjectVersion
+
+    s3:ListBucket
+
+3. create an AWS IAM policy
+
+        {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Action": [
+                      "s3:PutObject",
+                      "s3:GetObject",
+                      "s3:GetObjectVersion",
+                      "s3:DeleteObject",
+                      "s3:DeleteObjectVersion"
+                    ],
+                    "Resource": "arn:aws:s3:::<bucket>/<prefix>/*"
+                },
+                {
+                    "Effect": "Allow",
+                    "Action": "s3:ListBucket",
+                    "Resource": "arn:aws:s3:::<bucket>",
+                    "Condition": {
+                        "StringLike": {
+                            "s3:prefix": [
+                                "<prefix>/*"
+                            ]
+                        }
+                    }
+                }
+            ]
+        }
+
+4. Create an IAM role
+
+    <refer to https://docs.snowflake.net/manuals/user-guide/data-load-s3-config.html#step-2-create-the-aws-iam-role>
+
+5. Create a Cloud Storage Integration in Snowflake
+
+    CREATE STORAGE INTEGRATION s3_integration
+      TYPE = EXTERNAL_STAGE
+      STORAGE_PROVIDER = S3
+      ENABLED = TRUE
+      STORAGE_AWS_ROLE_ARN = 'arn:aws:iam::710178475289:role/mysnowflakerole'
+      STORAGE_ALLOWED_LOCATIONS = ('s3://snowflake-tryout/data');
+     
+
+6. Retrieve STORAGE_AWS_IAM_USER_ARN & STORAGE_AWS_EXTERNAL_ID from the storage integration
+    DESC integration s3_integration;
+
+7. Grant the IAM User Permissions to Access Bucket Objects
+    Edit the trust relationship in the IAM role created with the STORAGE_AWS_IAM_USER_ARN & STORAGE_AWS_EXTERNAL_ID
+    
+8. Create an external stage
+
+    CREATE OR REPLACE DATABASE integration_db;
+    
+    USE DATABASE integration_db;
+    
+    CREATE OR REPLACE SCHEMA int;
+    
+    GRANT USAGE ON DATABASE integration_db TO ROLE developer;
+    
+    GRANT USAGE ON SCHEMA int TO ROLE developer;
+    
+    GRANT CREATE STAGE on schema int TO ROLE developer;
+    
+    GRANT CREATE FILE FORMAT ON schema int TO ROLE developer;
+    
+    GRANT CREATE TABLE ON schema int TO ROLE developer;
+    
+    GRANT USAGE ON integration s3_integration TO ROLE developer;
+    
+    GRANT CREATE PIPE ON schema int TO ROLE developer;    
+    
+    -- login as dev_1
+    
+    USE warehouse compute_wh;
+    
+    USE database integration_db;
+    
+    USE schema int;
+    
+    CREATE OR REPLACE FILE FORMAT json_file_format type=json ;
+    
+    CREATE OR REPLACE STAGE s3_stage 
+        STORAGE_INTEGRATION = s3_integration 
+        URL = 's3://snowflake-tryout/data' 
+        file_format=json_file_format;
+    
+    CREATE OR REPLACE TABLE raw_json ( col variant);
+    
+    CREATE OR REPLACE PIPE int_pipe auto_ingest = true AS    
+        COPY INTO raw_json FROM @s3_stage;    
+    
+    SELECT * FROM
+        (
+        SELECT col:id::number id, 
+           col:name:first::string first_name, 
+           c.value:type::string type,
+           c.value:content::string content
+        FROM raw_json s, 
+         lateral flatten(input => col, path => 'contact') m,
+         lateral flatten (input => m.value:business) c
+        )
+        PIVOT (max(content) for type IN ('phone','email')) as p(id,first_name, phone, email);
+
+
+    select col:location:state_city::STRING,col:location:zip::String, col:price::int, col:sale_date::String
+    from RAW_JSON where col:location:state_city is not null;
+
+
+    USE ROLE ACCOUNTADMIN;
+    DROP DATABASE integration_db;
+
+-------------------------------------------------------------------
