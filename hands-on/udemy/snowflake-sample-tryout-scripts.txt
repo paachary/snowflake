@@ -254,6 +254,12 @@ DROP schema timetravel;
     
     GRANT USAGE ON integration s3_integration TO ROLE developer;
     
+
+------------------------------------------------
+
+---Creating snowpipe for data movement from s3 to external stage.
+
+
     GRANT CREATE PIPE ON schema int TO ROLE developer;    
     
     -- login as dev_1
@@ -276,6 +282,23 @@ DROP schema timetravel;
     CREATE OR REPLACE PIPE int_pipe auto_ingest = true AS    
         COPY INTO raw_json FROM @s3_stage;    
     
+
+---At this stage, place some file(s) in the S3 bucket and query the SYSTEM$PIPE_STATUS table:
+
+SELECT SYSTEM$PIPE_STATUS('integration_db.int.int_pipe');
+
+---if the status is "", then we are good.
+---"executionState":"RUNNING"
+
+---Query the raw stage table to check the contents of the S3 files loaded.
+
+SELECT * FROM raw_json;
+
+--------------------------------------------------------
+
+Task creation
+
+
     SELECT * FROM
         (
         SELECT col:id::number id, 
