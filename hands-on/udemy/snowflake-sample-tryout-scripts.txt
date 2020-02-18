@@ -252,6 +252,12 @@ DROP schema timetravel;
     
     GRANT CREATE TABLE ON schema int TO ROLE developer;
     
+    GRANT CREATE PROCEDURE ON schema int TO ROLE developer;
+    
+    GRANT CREATE VIEW ON schema int TO ROLE developer;
+    
+    GRANT CREATE TASK ON schema int TO ROLE developer;
+    
     USE ROLE ACCOUNTADMIN;
     GRANT USAGE ON integration s3_integration TO ROLE developer;
     
@@ -278,31 +284,49 @@ DROP schema timetravel;
         STORAGE_INTEGRATION = s3_integration 
         URL = 's3://snowflake-tryout/data' 
         file_format=json_file_format;
-    
-    CREATE TABLE contacts_raw ( id NUMBER, name STRING, phone STRING, email STRING);
+        
+    CREATE TABLE json_raw ( col variant);
 
     CREATE OR REPLACE PIPE int_pipe auto_ingest = true AS
-        INSERT INTO contacts_raw 
-            SELECT id, name, phone, email FROM
-            (
-            SELECT s.$1:id::number id, 
-                   s.$1:name:last::string||', '||s.$1:name:first::string name, 
-                   c.value:type::string type,
-                   c.value:content::string content
-                FROM @s3_stage s, 
-                 lateral flatten(input => s.$1, path => 'contact') m,
-                 lateral flatten (input => m.value:business) c)
-            PIVOT (max(content) for type IN ('phone','email')) as p(id,name, phone, email);
+        COPY INTO json_raw FROM @s3_stage;
 
----At this stage, place some file(s) in the S3 bucket and query the SYSTEM$PIPE_STATUS table:
+            
+    ---At this stage, place some file(s) in the S3 bucket and query the SYSTEM$PIPE_STATUS table:
 
-SELECT SYSTEM$PIPE_STATUS('integration_db.int.int_pipe');
+    SELECT SYSTEM$PIPE_STATUS('integration_db.int.int_pipe');
 
----if the status is "", then we are good.
----"executionState":"RUNNING"
+    ---if the status is "", then we are good.
+    ---"executionState":"RUNNING"
 
----Query the raw stage table to check the contents of the S3 files loaded.
-SELECT * FROM contacts_raw;
+    ---Query the raw stage table to check the contents of the S3 files loaded.
+    SELECT * FROM json_raw;
+
+    CREATE TABLE contacts_raw ( id NUMBER, name STRING, phone STRING, email STRING);
+    
+    CREATE OR REPLACE PROCEDURE load_contact_stg()
+        RETURNS VARCHAR
+        LANGUAGE javascript
+        AS
+        $$
+        
+          snowflake.execute( { sqlText :
+            `DELETE FROM contacts_raw`});
+
+            var stmt = snowflake.execute( { sqlText :
+            `INSERT INTO contacts_raw (id, name, phone, email)
+                    SELECT id, name, phone, email FROM
+                    (
+                    SELECT s.$1:id::number id, 
+                           s.$1:name:last::string||', '||s.$1:name:first::string name, 
+                           c.value:type::string type,
+                           c.value:content::string content
+                        FROM @s3_stage s, 
+                         lateral flatten(input => s.$1, path => 'contact') m,
+                         lateral flatten (input => m.value:business) c)
+                    PIVOT (max(content) for type IN ('phone','email')) as p(id,name, phone, email)
+            `});            
+        $$
+        ;    
 
 --------------------------------------------------------
 
@@ -314,6 +338,74 @@ SELECT * FROM contacts_raw;
     -- Target Table
     CREATE TABLE contacts ( id NUMBER, name STRING, phone STRING, email STRING);   
     
+    -- Creating a view using the stream to obtain the changed records.
+    -- Will be useful to update / insert into the master table
+    CREATE OR REPLACE VIEW contact_raw_view (id, name, phone, email, rec_status) 
+    AS
+        SELECT a.id, a.name, a.phone, a.email, 'I'    
+        FROM contacts_changes_stream a 
+        WHERE (a.METADATA$ACTION = 'INSERT' and a.METADATA$ISUPDATE='False') 
+        UNION ALL
+        SELECT a.id, a.name, a.phone, a.email, 'D'    
+        FROM contacts_changes_stream a 
+        WHERE a.METADATA$ACTION = 'DELETE' and a.METADATA$ISUPDATE='False'
+          AND NOT EXISTS ( SELECT '1' FROM contacts_changes_stream b
+                           WHERE b.METADATA$ACTION = 'INSERT' and b.METADATA$ISUPDATE='False'
+                             AND a.id = b.id)
+        UNION ALL
+        SELECT a.id, a.name, a.phone, a.email, 'U'    
+        FROM contacts_changes_stream a 
+        WHERE a.METADATA$ACTION = 'INSERT' and a.METADATA$ISUPDATE='True';
+    
+    -- Update the master contacts table
+    
+    CREATE OR REPLACE PROCEDURE update_contacts ()
+    RETURNS VARCHAR
+    LANGUAGE javascript
+    AS
+    $$
+        snowflake.execute( { sqlText :
+            `MERGE INTO contacts c USING contact_raw_view cv
+            ON c.id = cv.id
+            WHEN matched AND cv.rec_status = 'U'
+            THEN UPDATE
+            SET  c.email = cv.email ,
+                 c.phone = cv.phone
+            WHEN matched AND cv.rec_status = 'D'
+            THEN DELETE
+            WHEN NOT MATCHED AND cv.rec_status = 'I'
+            THEN INSERT
+             (c.id, c.name, c.email, c.phone) VALUES
+              (cv.id, cv.name, cv.email, cv.phone)`
+        });
+    $$
+    ;
+
+    -- ELT using Streams
+
+    CREATE OR REPLACE PROCEDURE load_and_transform_contacts ()
+    RETURNS VARCHAR
+    LANGUAGE javascript
+    AS
+    $$
+        snowflake.execute( { sqlText : `call load_contact_stg()` });
+        snowflake.execute( { sqlText : `call load_contact_stg()` });
+    $$
+    ;
+    
+    -- invoking procedure
+    call load_and_transform_contacts();
+    
+--------------------------
+
+    -- Task Creation
+    CREATE OR REPLACE TASK load_and_transform_task WAREHOUSE='compute_wh'
+    SCHEDULE= '1 MINUTE'
+    AS
+        call load_and_transform_contacts();
+    
+
+
     USE ROLE ACCOUNTADMIN;
     DROP DATABASE integration_db;
 
