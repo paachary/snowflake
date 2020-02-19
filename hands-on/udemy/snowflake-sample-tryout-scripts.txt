@@ -414,9 +414,11 @@ DROP schema timetravel;
 
     --Producer Account = <acc1>
     --Consumer Account = <acc2>
+    
+    -- Please run the create database and schema scripts as mentioned above.
 
     --Login into the producer account as dev_1
-
+    
     USE warehouse compute_wh;
     
     USE database integration_db;
@@ -513,15 +515,130 @@ DROP schema timetravel;
         DROP DATABASE integration_db;
 -------------------------------------------------------------------        
 
-        
-        
+    --READER ACCOUNTS (non-snowflake user accounts)
+    
+    -- Login into the producer account and as admin
+    
+    USE ROLE accountadmin;
+    
+    -- Managed account cannot be replaced, Cannot use CREATE OR REPLACE 
+    CREATE MANAGED ACCOUNT managed_acct
+    ADMIN_NAME = tony, ADMIN_PASSWORD = 'ChangeMeNextTime123' TYPE= READER;
+    
+    SHOW MANAGED ACCOUNTS;    
+    
+    -- Create a share in the producer account
+    
+    -- Please run the create database and schema scripts as mentioned above.
+    
+    --Login into the producer account as dev_1
 
+    USE warehouse compute_wh;
+    
+    USE database integration_db;
+    
+    USE schema int;
 
+    CREATE OR REPLACE FILE FORMAT json_file_format type=json ;
+    
+    CREATE OR REPLACE STAGE s3_stage 
+        STORAGE_INTEGRATION = s3_integration 
+        URL = 's3://snowflake-tryout/data' 
+        file_format=json_file_format;
         
-        
-        
+    CREATE TABLE json_raw ( col variant);
 
+    CREATE OR REPLACE PIPE int_pipe auto_ingest = true AS
+        COPY INTO json_raw FROM @s3_stage;        
         
+    CREATE TABLE contacts_raw ( id NUMBER, name STRING, phone STRING, email STRING);
+    
+    CREATE OR REPLACE PROCEDURE load_contact_stg()
+        RETURNS VARCHAR
+        LANGUAGE javascript
+        AS
+        $$
         
+          snowflake.execute( { sqlText :
+            `DELETE FROM contacts_raw`});
 
+            var stmt = snowflake.execute( { sqlText :
+            `INSERT INTO contacts_raw (id, name, phone, email)
+                    SELECT id, name, phone, email FROM
+                    (
+                    SELECT s.$1:id::number id, 
+                           s.$1:name:last::string||', '||s.$1:name:first::string name, 
+                           c.value:type::string type,
+                           c.value:content::string content
+                        FROM @s3_stage s, 
+                         lateral flatten(input => s.$1, path => 'contact') m,
+                         lateral flatten (input => m.value:business) c)
+                    PIVOT (max(content) for type IN ('phone','email')) as p(id,name, phone, email)
+            `});            
+        $$
+        ;
+        
+        -- Login as admininstrator
+        
+        USE ROLE accountadmin;
 
+        CREATE OR REPLACE SHARE contacts_share;
+        
+        GRANT USAGE ON DATABASE integration_db TO SHARE contacts_share;
+        
+        GRANT USAGE ON SCHEMA integration_db.int TO SHARE contacts_share;
+        
+        GRANT SELECT ON integration_db.int.contacts_raw TO SHARE contacts_share;
+        
+        SHOW SHARES;
+        
+        SHOW GRANTS TO SHARE contacts_share;
+
+        ALTER SHARE contacts_share ADD ACCOUNT= <reader account locator from the output of SHOW MANAGED ACCOUNTS>;
+        
+        -- LOGIN AS THE READER ACCOUNT
+        
+        /* Task 1: Make sure you're logged in as ACCOUNTADMIN. Don't forget to also set the role for your worksheet context as ACCOUNTADMIN.*/
+        use role ACCOUNTADMIN;
+
+        /* Task 2: Create Custom Roles (Optional) */
+        CREATE ROLE developer;
+
+        /* Task 3: Create Users */
+        CREATE USER john PASSWORD='johnyJohny1234' DEFAULT_ROLE = developer MUST_CHANGE_PASSWORD = true;
+
+        /* Task 4: Create Virtual Warehouses (Optional) */
+        CREATE OR REPLACE WAREHOUSE reader_WH WAREHOUSE_SIZE=XSMALL INITIALLY_SUSPENDED = TRUE;
+
+        /* Task 5: Create Resource Monitors (Optional) */
+        create or replace resource monitor limiter with credit_quota=5000
+           triggers on 75 percent do notify
+                    on 100 percent do suspend
+                    on 110 percent do suspend_immediate;
+
+        /* Task 6: Create a Database from Each Share Shared with the Account */
+        CREATE DATABASE contacts_share_db FROM SHARE <>.contacts_share;
+
+        /* Task 7: Grant Required Virtual Warehouse and Database Privileges to Roles */
+        GRANT USAGE ON WAREHOUSE reader_WH TO ROLE developer;
+        
+        GRANT IMPORTED PRIVILEGES ON DATABASE contacts_share_db to role developer;
+
+        GRANT ROLE developer TO user john;
+      
+        -- login as john
+        
+        use WAREHOUSE READER_WH;
+        use DATABASE CONTACTS_SHARE_DB;
+       
+        select * from int.CONTACTS_RAW;
+        
+       -- Login to the producer account
+       
+        USE ROLE ACCOUNTADMIN;
+        
+        DROP SHARE CONTACTS_SHARE;
+        
+        DROP DATABASE integration_db;
+
+-------------------------------------------------------------------------------------------------------    
