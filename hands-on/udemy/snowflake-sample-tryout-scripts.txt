@@ -263,8 +263,8 @@ DROP schema timetravel;
     
     GRANT CREATE PIPE ON schema int TO ROLE developer;
     
-    GRANT CREATE STREAM ON schema int TO ROLE developer;
-    
+    GRANT CREATE STREAM ON schema int TO ROLE developer;  
+   
     USE ROLE developer;
 
 ------------------------------------------------
@@ -492,10 +492,12 @@ DROP schema timetravel;
         
         GRANT ROLE developer TO USER <user>;
         
+        GRANT USAGE ON WAREHOUSE compute_wh TO ROLE developer;
+        
         show shares;
         -- should see inbound share
         
-        CREATE DATABASE contact_db FROM SHARE URA72557.CONTACTS_SHARE;
+        CREATE DATABASE contact_db FROM SHARE <>.CONTACTS_SHARE;
         
         GRANT IMPORTED PRIVILEGES ON DATABASE contact_db TO developer;
         
@@ -513,6 +515,13 @@ DROP schema timetravel;
         DROP SHARE CONTACTS_SHARE;
         
         DROP DATABASE integration_db;
+        
+      -- Login to the consumer account
+        USE ROLE ACCOUNTADMIN;
+        
+        DROP ROLE developer;
+        
+        DROP DATABASE contact_db; 
 -------------------------------------------------------------------        
 
     --READER ACCOUNTS (non-snowflake user accounts)
@@ -640,5 +649,130 @@ DROP schema timetravel;
         DROP SHARE CONTACTS_SHARE;
         
         DROP DATABASE integration_db;
+        
+      -- Login to the consumer account
+        USE ROLE ACCOUNTADMIN;
+        
+        DROP ROLE developer;
+        
+        DROP DATABASE contacts_share_db; 
 
 -------------------------------------------------------------------------------------------------------    
+
+    -- SHARING VIEWS
+    
+    -- Login into the producer account and as admin
+    
+    -- Please run the create database and schema scripts as mentioned above.
+    
+    -- login as dev_1
+    
+    USE warehouse compute_wh;
+    
+    USE database integration_db;
+    
+    USE schema int;
+    
+    CREATE OR REPLACE FILE FORMAT json_file_format type=json ;
+    
+    CREATE OR REPLACE STAGE s3_stage 
+        STORAGE_INTEGRATION = s3_integration 
+        URL = 's3://snowflake-tryout/data' 
+        file_format=json_file_format;
+        
+    CREATE TABLE json_raw ( col variant);
+
+    CREATE OR REPLACE PIPE int_pipe auto_ingest = true AS
+        COPY INTO json_raw FROM @s3_stage;
+
+    ---Query the raw stage table to check the contents of the S3 files loaded.
+    SELECT * FROM json_raw;
+
+    CREATE TABLE contacts_raw ( id NUMBER, name STRING, phone STRING, email STRING);
+    
+    CREATE OR REPLACE PROCEDURE load_contact_stg()
+        RETURNS VARCHAR
+        LANGUAGE javascript
+        AS
+        $$
+        
+          snowflake.execute( { sqlText :
+            `DELETE FROM contacts_raw`});
+
+            var stmt = snowflake.execute( { sqlText :
+            `INSERT INTO contacts_raw (id, name, phone, email)
+                    SELECT id, name, phone, email FROM
+                    (
+                    SELECT s.$1:id::number id, 
+                           s.$1:name:last::string||', '||s.$1:name:first::string name, 
+                           c.value:type::string type,
+                           c.value:content::string content
+                        FROM @s3_stage s, 
+                         lateral flatten(input => s.$1, path => 'contact') m,
+                         lateral flatten (input => m.value:business) c)
+                    PIVOT (max(content) for type IN ('phone','email')) as p(id,name, phone, email)
+            `});            
+        $$
+        ;    
+        
+        CREATE OR REPLACE SECURE VIEW contacts_view  (id, name, phone, email, rec_status) AS
+        SELECT id, name, phone, email , 'I'
+        FROM contacts_raw;
+        
+        GRANT SELECT ON contacts_view TO PUBLIC;
+
+        -- Login as sysadmin
+        
+        USE ROLE accountadmin;
+
+        CREATE OR REPLACE SHARE contacts_share;
+        
+        GRANT USAGE ON DATABASE integration_db TO SHARE contacts_share;
+        
+        GRANT USAGE ON SCHEMA integration_db.int TO SHARE contacts_share;
+        
+        GRANT SELECT ON VIEW integration_db.int.contacts_view TO SHARE contacts_share;
+        
+        GRANT REFERENCE_USAGE ON DATABASE integration_db TO SHARE contacts_share;
+        
+        ALTER SHARE contacts_share ADD ACCOUNT=vga82353;
+        
+        ---------------------------------------------
+        --Login into the consumer account
+        
+        USE ROLE accountadmin;
+        
+        CREATE OR REPLACE ROLE developer;
+        
+        GRANT ROLE developer TO USER <user>;
+        
+        GRANT USAGE ON WAREHOUSE compute_wh TO ROLE developer;
+        
+        show shares;
+        -- should see inbound share
+        
+        CREATE OR REPLACE DATABASE contact_db FROM SHARE URA72557.CONTACTS_SHARE;
+        
+        GRANT IMPORTED PRIVILEGES ON DATABASE contact_db TO developer;
+        
+        USE ROLE developer;
+        
+        USE DATABASE contact_db;
+        
+        SELECT * FROM int.contact_raw_view;
+        
+      -- Login to the producer account
+       
+        USE ROLE ACCOUNTADMIN;
+        
+        DROP SHARE CONTACTS_SHARE;
+        
+        DROP DATABASE integration_db;  
+        
+      -- Login to the consumer account
+        USE ROLE ACCOUNTADMIN;
+        
+        DROP ROLE developer;
+        
+        DROP DATABASE contact_db;      
+--------------------------------------------------------------------
