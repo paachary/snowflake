@@ -264,7 +264,7 @@ DROP schema timetravel;
     GRANT CREATE PIPE ON schema int TO ROLE developer;
     
     GRANT CREATE STREAM ON schema int TO ROLE developer;
-
+    
     USE ROLE developer;
 
 ------------------------------------------------
@@ -410,3 +410,118 @@ DROP schema timetravel;
     DROP DATABASE integration_db;
 
 -------------------------------------------------------------------
+    -- Using Shares across two accounts:
+
+    --Producer Account = <acc1>
+    --Consumer Account = <acc2>
+
+    --Login into the producer account as dev_1
+
+    USE warehouse compute_wh;
+    
+    USE database integration_db;
+    
+    USE schema int;
+
+    CREATE OR REPLACE FILE FORMAT json_file_format type=json ;
+    
+    CREATE OR REPLACE STAGE s3_stage 
+        STORAGE_INTEGRATION = s3_integration 
+        URL = 's3://snowflake-tryout/data' 
+        file_format=json_file_format;
+        
+    CREATE TABLE json_raw ( col variant);
+
+    CREATE OR REPLACE PIPE int_pipe auto_ingest = true AS
+        COPY INTO json_raw FROM @s3_stage;        
+        
+    CREATE TABLE contacts_raw ( id NUMBER, name STRING, phone STRING, email STRING);
+    
+    CREATE OR REPLACE PROCEDURE load_contact_stg()
+        RETURNS VARCHAR
+        LANGUAGE javascript
+        AS
+        $$
+        
+          snowflake.execute( { sqlText :
+            `DELETE FROM contacts_raw`});
+
+            var stmt = snowflake.execute( { sqlText :
+            `INSERT INTO contacts_raw (id, name, phone, email)
+                    SELECT id, name, phone, email FROM
+                    (
+                    SELECT s.$1:id::number id, 
+                           s.$1:name:last::string||', '||s.$1:name:first::string name, 
+                           c.value:type::string type,
+                           c.value:content::string content
+                        FROM @s3_stage s, 
+                         lateral flatten(input => s.$1, path => 'contact') m,
+                         lateral flatten (input => m.value:business) c)
+                    PIVOT (max(content) for type IN ('phone','email')) as p(id,name, phone, email)
+            `});            
+        $$
+        ;
+        
+        -- Login as sysadmin
+        
+        USE ROLE accountadmin;
+
+        CREATE OR REPLACE SHARE contacts_share;
+        
+        GRANT USAGE ON DATABASE integration_db TO SHARE contacts_share;
+        
+        GRANT USAGE ON SCHEMA integration_db.int TO SHARE contacts_share;
+        
+        GRANT SELECT ON integration_db.int.contacts_raw TO SHARE contacts_share;
+        
+        SHOW SHARES;
+        
+        SHOW GRANTS TO SHARE contacts_share;
+
+        ALTER SHARE contacts_share ADD ACCOUNT=<acc2>;
+       
+       -----------------------------------------------------
+       
+        --Login into the consumer account
+        
+        USE ROLE accountadmin;
+        
+        CREATE OR REPLACE ROLE developer;
+        
+        GRANT ROLE developer TO USER <user>;
+        
+        show shares;
+        -- should see inbound share
+        
+        CREATE DATABASE contact_db FROM SHARE URA72557.CONTACTS_SHARE;
+        
+        GRANT IMPORTED PRIVILEGES ON DATABASE contact_db TO developer;
+        
+        USE ROLE developer;
+        
+        USE DATABASE contact_db;
+        
+        SELECT * FROM int.contacts_raw;
+       ---------------------------------------
+       
+       -- Login to the producer account
+       
+        USE ROLE ACCOUNTADMIN;
+        
+        DROP SHARE CONTACTS_SHARE;
+        
+        DROP DATABASE integration_db;
+-------------------------------------------------------------------        
+
+        
+        
+
+
+        
+        
+        
+
+        
+        
+
+
