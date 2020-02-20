@@ -1,0 +1,31 @@
+Data Loading Consideration:
+
+Warehouse size should match number of files being loaded and the amount of data in each file.
+No. of load operations cannot exceed the no of files being loaded.
+Produce data files roughly 10 MB to 100MB in size compressed.
+Aggregate smaller files to minimize processing overhead.
+Splut loader files into greater no of smaller files to distribute load among servers.
+No of data files processed in parallel is determined by no and capacity of servers in the warehouse.
+Split large files by line to avoid records spanning chunks.
+
+Variant datatype limitations :  16MB compressed size limit on individual rows.
+No need to split JSON and AVRO to separate docs with line breaks / commas. Instead, use STRIP_OUTER_ARRAY flag while copying data into table.
+
+Parquet file type: data size limitations: larger than 3GB will timeout. Split large files into 1GB each for loading.
+
+Snowpipe: In addition to resource consumption, an additional overhead to manage files in the internal load queue is included in the utilization 
+costs charged for snowpipe.
+Snowpipe charges 0.06 credits per 1000 files queued.
+
+Snowpipe is designed to load new data typically within a minute after a file notification is sent. So, design file size such that it gets generated once a minute.
+
+Disadvantages for generating smaller files within a minute:
+    reduction in latency between staging and loading the data cannot be guaranteed.
+    increases the overhead charges in relation to the no of files being queued for loading. 
+    
+LOAD_UNCERTAIN_FILES => determines whether to reload the file after the 64 day expiry date. The LOAD METADATA expires after 64 days.
+    
+
+
+
+
