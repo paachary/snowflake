@@ -476,6 +476,12 @@ DROP schema timetravel;
         
         GRANT SELECT ON integration_db.int.contacts_raw TO SHARE contacts_share;
         
+        -- Sharing a complete database
+        GRANT SELECT ON ALL TABLES IN DATABASE integration_db  TO SHARE contacts_share;
+
+        -- Sharing a complete schema
+        GRANT SELECT ON ALL TABLES IN SCHEMA integration_db.int  TO SHARE contacts_share;
+        
         SHOW SHARES;
         
         SHOW GRANTS TO SHARE contacts_share;
@@ -776,3 +782,16 @@ DROP schema timetravel;
         
         DROP DATABASE contact_db;      
 --------------------------------------------------------------------
+
+-- ***CANNOT CREATE ANY OBJECTS IN A DATABASE CREATED FROM A SHARE IN THE CONSUMER ACCOUNT;*****
+
+create table exampl21 (num1 number);
+ --- 003001 (42501): SQL access control error:                                       
+ --- Insufficient privileges to operate on schema 'INT'
+
+
+CREATE SCHEMA NEW_SCHEMA;
+ --- 003001 (42501): SQL access control error:                                       
+ --- Insufficient privileges to operate on database 'CONTACT_DB'
+
+
