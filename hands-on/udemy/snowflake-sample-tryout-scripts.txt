@@ -795,3 +795,30 @@ CREATE SCHEMA NEW_SCHEMA;
  --- Insufficient privileges to operate on database 'CONTACT_DB'
 
 
+--------------------------------------------------------------------------------------------------------
+
+--CLONING
+-- Login as Primary user in the account and execute the following steps for enabling the secondary user to clone an entire database.
+
+GRANT CREATE DATABASE ON ACCOUNT TO ROLE data_science;
+GRANT CREATE TABLE ON schema int TO ROLE data_science;
+GRANT SELECT ON TABLE CONTACTS_RAW TO ROLE data_science;
+GRANT USAGE ON DATABASE integration_db TO ROLE data_science;
+GRANT USAGE ON SCHEMA int TO ROLE data_science;
+
+-- Login as secondary user with the data_science role and issue the clone command with create database stmt.
+
+CREATE OR REPLACE DATABASE cloned_int_db CLONE integration_db;
+show grants on schema INT ;
+use schema INT;
+use WAREHOUSE COMPUTE_WH;
+select * from contacts_raw;
+
+DROP database cloned_int_db;
+
+-- Login as primary user
+DROP DATABASE integration_db;
+
+--------------------------------------------------------------------------------------------------------
+
+
