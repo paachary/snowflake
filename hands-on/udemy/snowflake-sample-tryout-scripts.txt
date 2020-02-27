@@ -18,19 +18,102 @@ GRANT ROLE data_science to USER ds_1;
 GRANT ROLE developer to USER dev_1;
 GRANT USAGE ON schema PUBLIC to role developer;
 
+----------------------------------------------------------------------------------
+
+---** Loading data from stage **
+
+CREATE OR REPLACE DATABASE integration_db;
+
+USE DATABASE integration_db;
+
+CREATE OR REPLACE SCHEMA int;
+
+CREATE TABLE json_raw ( col variant);
+
+-- User Stage
+-- Referenced by @~
+-- convenient option if your files will only be accessed by a single user, but need to be copied into multiple tables.
+-- Unlike named stages, user stages cannot be altered or dropped.
+-- user stages do not support setting file format options. Instead, you must specify file format and copy options as part of the COPY INTO <table> command.
+
+-- example:
+
+put file://./contacts.json @~;
+
+list @~;
+
+copy into JSON_RAW from @~/contacts.json file_format=(type=json) PURGE = TRUE;
+
+-- this option is not appropriate if:
+
+-- Multiple users require access to the files.
+
+-- The current user does not have INSERT privileges on the tables the data will be loaded into.
+
+--------------------------------------
+
+--- Table Stage
+-- Referenced by @%<table_name>
+
+-- Each table has a Snowflake stage allocated to it by default for storing files. 
+
+-- This stage is a convenient option if your files need to be accessible to multiple users and only need to be copied into a single table.
+
+-- Table stages have the same name as the table; e.g. a table named mytable has a stage referenced as @%mytable.
+
+-- Unlike named stages, table stages cannot be altered or dropped.
+
+-- Table stages do not support setting file format options. Instead, you must specify file format and copy options as part of the COPY INTO <table> command.
+
+-- Table stage is not a separate database object; rather, it is an implicit stage tied to the table itself. 
+
+-- example:
+
+put file://./contacts.json @%json_raw;
+
+list @%json_raw;
+
+copy into JSON_RAW from @%json_raw/contacts.json file_format=(type=json) PURGE = TRUE;
+
+-- Table stages do not support transforming data while loading it (i.e. using a query as the source for the COPY command).
+    
+    -- example of above error
+
+    SELECT * FROM @%JSON_RAW;
+    
+     --   100080 (22000): Number of columns in file (4) does not match that of the corresponding table (1), use file format option error_on_column_count_mismatch=false to ignore this error
+     --     File '@JSON_RAW/contacts.json.gz', line 2, character 1
+     --     Row 1 starts at line 1, column "JSON_RAW"[4]
+
+-------------------------------------------------------------
+
+-- Named internal Stage
+-- Referenced by @<name>
+
+-- Internal stages are named database objects that provide the greatest degree of flexibility for data loading. 
+
+-- Named internal stages are optional but recommended when you plan regular data loads that could involve multiple users and/or tables.
+
+-- Users with the appropriate privileges on the stage can load data into any table.
+
+-- Ownership of the stage can be transferred to another role, and privileges granted to use the stage can be modified to add or remove roles.
+
+-- When you create a stage, you must explicitly grant privileges on the stage to one or more roles before users with those roles can use the stage.
+
+
 CREATE OR REPLACE FILE FORMAT pipe_file_format
-COMPRESSION = 'AUTO' 
-FIELD_DELIMITER = '|' 
-RECORD_DELIMITER = '\n' 
-SKIP_HEADER = 1 
-FIELD_OPTIONALLY_ENCLOSED_BY = 'NONE' 
-TRIM_SPACE = FALSE 
-ERROR_ON_COLUMN_COUNT_MISMATCH = TRUE 
-ESCAPE = 'NONE' 
-ESCAPE_UNENCLOSED_FIELD = '\134' 
-DATE_FORMAT = 'AUTO' 
-TIMESTAMP_FORMAT = 'AUTO' 
-NULL_IF = ('\\N');
+    COMPRESSION = 'AUTO' 
+    FIELD_DELIMITER = '|' 
+    RECORD_DELIMITER = '\n' 
+    SKIP_HEADER = 1 
+    FIELD_OPTIONALLY_ENCLOSED_BY = 'NONE' 
+    TRIM_SPACE = FALSE 
+    ERROR_ON_COLUMN_COUNT_MISMATCH = TRUE 
+    ESCAPE = 'NONE' 
+    ESCAPE_UNENCLOSED_FIELD = '\134' 
+    DATE_FORMAT = 'AUTO' 
+    TIMESTAMP_FORMAT = 'AUTO' 
+    NULL_IF = ('\\N');
 
 CREATE OR REPLACE STAGE stage_internal FILE_FORMAT= (FORMAT_NAME=pipe_file_format);
 
@@ -61,7 +144,8 @@ SELECT * FROM customer;
 GRANT SELECT ON customer TO ROLE data_science;
 GRANT SELECT ON customer TO ROLE DEVELOPER;
 
--------------------------------------------------------------
+-------------------------------------------------------------------------
+
 CLUSTERING
 
 CREATE OR REPLACE WAREHOUSE performance_test warehouse_size = LARGE;
@@ -224,7 +308,7 @@ DROP schema timetravel;
       TYPE = EXTERNAL_STAGE
       STORAGE_PROVIDER = S3
       ENABLED = TRUE
-      STORAGE_AWS_ROLE_ARN = 'arn:aws:iam::710178475289:role/mysnowflakerole'
+      STORAGE_AWS_ROLE_ARN = 'arn:aws:iam::<>:role/mysnowflakerole'
       STORAGE_ALLOWED_LOCATIONS = ('s3://snowflake-tryout/data');
      
 
@@ -820,5 +904,75 @@ DROP database cloned_int_db;
 DROP DATABASE integration_db;
 
 --------------------------------------------------------------------------------------------------------
+
+---** Loading data from stage **
+
+CREATE OR REPLACE DATABASE integration_db;
+
+USE DATABASE integration_db;
+
+CREATE OR REPLACE SCHEMA int;
+
+CREATE TABLE json_raw ( col variant);
+
+-- User Stage
+-- Referenced by @~
+-- convenient option if your files will only be accessed by a single user, but need to be copied into multiple tables.
+-- Unlike named stages, user stages cannot be altered or dropped.
+-- user stages do not support setting file format options. Instead, you must specify file format and copy options as part of the COPY INTO <table> command.
+
+-- example:
+
+put file://./contacts.json @~;
+
+list @~;
+
+copy into JSON_RAW from @~/contacts.json file_format=(type=json) PURGE = TRUE;
+
+-- this option is not appropriate if:
+
+-- Multiple users require access to the files.
+
+-- The current user does not have INSERT privileges on the tables the data will be loaded into.
+
+--------------------------------------
+
+--- Table Stage
+-- Referenced by @%<table_name>
+
+-- Each table has a Snowflake stage allocated to it by default for storing files. 
+
+-- This stage is a convenient option if your files need to be accessible to multiple users and only need to be copied into a single table.
+
+-- Table stages have the same name as the table; e.g. a table named mytable has a stage referenced as @%mytable.
+
+-- Unlike named stages, table stages cannot be altered or dropped.
+
+-- Table stages do not support setting file format options. Instead, you must specify file format and copy options as part of the COPY INTO <table> command.
+
+-- Table stage is not a separate database object; rather, it is an implicit stage tied to the table itself. 
+
+-- example:
+
+put file://./contacts.json @%json_raw;
+
+list @%json_raw;
+
+copy into JSON_RAW from @%json_raw/contacts.json file_format=(type=json) PURGE = TRUE;
+
+-- Table stages do not support transforming data while loading it (i.e. using a query as the source for the COPY command).
+    
+    -- example of above error
+
+    SELECT * FROM @%JSON_RAW;
+    
+     --   100080 (22000): Number of columns in file (4) does not match that of the corresponding table (1), use file format option error_on_column_count_mismatch=false to ignore this error
+     --     File '@JSON_RAW/contacts.json.gz', line 2, character 1
+     --     Row 1 starts at line 1, column "JSON_RAW"[4]
+
+--------------------------------------
+
+
+
 
 
