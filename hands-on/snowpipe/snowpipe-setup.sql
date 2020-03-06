@@ -13,9 +13,11 @@ create or replace schema dataload;
 
 use role accountadmin;
 
-CREATE ROLE developer;
+CREATE OR REPLACE ROLE developer ;
 
-CREATE USER dev_1 PASSWORD = '****' LOGIN_NAME = dev_1 DEFAULT_ROLE = developer
+grant role DEVELOPER to role SYSADMIN;
+
+CREATE USER dev_1 PASSWORD = '*****' LOGIN_NAME = dev_1 DEFAULT_ROLE = developer
 DEFAULT_WAREHOUSE = 'compute_wh' MUST_CHANGE_PASSWORD = false;
 
 GRANT ROLE developer to USER dev_1;
@@ -27,9 +29,12 @@ use schema dataload;
 CREATE OR REPLACE FILE FORMAT csv_format TYPE='CSV'
     RECORD_DELIMITER='\\n'
     FIELD_DELIMITER='|'
-    TRIM_SPACE=FALSE;
+    TRIM_SPACE=FALSE
+    NULL_IF = ('NULL','null','','          ');
 
 CREATE OR REPLACE STAGE internal_stg file_format = csv_format;
+
+PUT file:///home/hadoop/snowflake/departments.csv @internal_stg;
 
 CREATE OR REPLACE TABLE departments
 (department_id INT, 
@@ -42,27 +47,30 @@ CREATE OR REPLACE TABLE departments
  CREATE OR REPLACE PIPE load_dept_pipe AS
  COPY INTO departments from @internal_stg;
  
+ALTER PIPE LOAD_DEPT_PIPE SET PIPE_EXECUTION_PAUSED=true;
+
 -- grant the required privileges for the user to execute snowpipe.
 
 GRANT OWNERSHIP ON pipe load_dept_pipe to role developer;
-GRANT USAGE ON file_format TO ROLE developer;
-GRANT USAGE, READ on internal_stg to role developer;
+GRANT USAGE ON file format csv_format TO ROLE developer;
+GRANT READ on STAGE internal_stg to role developer;
 GRANT USAGE ON DATABASE dataload_db to role developer;
 GRANT USAGE ON SCHEMA dataload to role developer;
 GRANT SELECT , INSERT ON departments to role developer;
 
+select SYSTEM$PIPE_FORCE_RESUME('LOAD_DEPT_PIPE');
+
+SELECT SYSTEM$PIPE_STATUS('LOAD_DEPT_PIPE');
 
 -- Get the environment ready for creating rest API in python
 /*
 
-// Install the python sdk
-
+// Install the python sdk for snowflake
 pip install  snowflake-ingest
-
 
 // configure security (per user)
 
-1. generate the private key with encrypted version
+1. generate the private key with encrypted version (passphrase)
 
 openssl genrsa 2048 | openssl pkcs8 -topk8 -inform PEM -out rsa_key.p8
 
@@ -81,6 +89,9 @@ alter user dev_1 set rsa_public_key='<Paste the public key from the file. Do not
 DESCRIBE USER dev_1;
 
 /*
+
+export PRIVATE_KEY_PASSPHRASE='<passphrase>'
+
 Write the sample python code to load the data continually into the departments table using the pipe.
 
 from logging import getLogger
@@ -161,5 +172,6 @@ while True:
 */
 
 
+USE ROLE ACCOUNTADMIN;
 
-
+DROP DATABASE dataload_db;
