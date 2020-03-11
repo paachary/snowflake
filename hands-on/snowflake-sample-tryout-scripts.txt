@@ -882,13 +882,167 @@ DROP schema timetravel;
 --------------------------------------------------------------------------------------------------------
 
 --CLONING
--- Login as Primary user in the account and execute the following steps for enabling the secondary user to clone an entire database.
+
+-- Intent to create clone of an entire database in an existing account and validate the objects that get cloned
+
+-- Create a role and a user for this exercise
+
+-- Login as sysadmin
+
+    use role accountadmin;
+
+    CREATE ROLE data_science;
+
+    GRANT USAGE ON WAREHOUSE compute_wh to data_science;
+
+    CREATE USER ds_1 PASSWORD = '****' LOGIN_NAME = ds_1 DEFAULT_ROLE = data_science
+    DEFAULT_WAREHOUSE = 'compute_wh' MUST_CHANGE_PASSWORD = false;
+    
+    GRANT ROLE DATA_SCIENCE to user ds_1;
+
+-- Create the objects necessary for the exercise
+
+    CREATE OR REPLACE DATABASE integration_db;
+    
+    CREATE OR REPLACE SCHEMA int;
+    
+    CREATE OR REPLACE FILE FORMAT json_file_format type=json ;
+    
+    CREATE TABLE json_raw ( col variant);
+    
+    PUT file:///home/hadoop/snowflake/contacts.json @%json_raw;
+    
+    copy into JSON_RAW from @%json_raw/contacts.json file_format = json_file_format;
+    
+    CREATE TABLE contacts_raw ( id NUMBER, name STRING, phone STRING, email STRING);
+    
+    -- Loading into the target table
+    CREATE OR REPLACE PROCEDURE load_contact_stg()
+        RETURNS VARCHAR
+        LANGUAGE javascript
+        AS
+        $$
+        
+          snowflake.execute( { sqlText :
+            `DELETE FROM contacts_raw`});
+
+            var stmt = snowflake.execute( { sqlText :
+            `INSERT INTO contacts_raw (id, name, phone, email)
+                    SELECT id, name, phone, email FROM
+                    (
+                    SELECT s.$1:id::number id, 
+                           s.$1:name:last::string||', '||s.$1:name:first::string name, 
+                           c.value:type::string type,
+                           c.value:content::string content
+                        FROM json_raw s, 
+                         lateral flatten(input => s.$1, path => 'contact') m,
+                         lateral flatten (input => m.value:business) c)
+                    PIVOT (max(content) for type IN ('phone','email')) as p(id,name, phone, email)
+            `});            
+        $$
+        ;
+
+    -- Create stream
+    CREATE OR REPLACE STREAM contacts_changes_stream ON TABLE contacts_raw; 
+
+    -- Target Table
+    CREATE TABLE contacts ( id NUMBER, name STRING, phone STRING, email STRING);   
+    
+    -- Creating a view using the stream to obtain the changed records.
+    -- Will be useful to update / insert into the master table
+    CREATE OR REPLACE VIEW contact_raw_view (id, name, phone, email, rec_status) 
+    AS
+        SELECT a.id, a.name, a.phone, a.email, 'I'    
+        FROM contacts_changes_stream a 
+        WHERE (a.METADATA$ACTION = 'INSERT' and a.METADATA$ISUPDATE='False') 
+        UNION ALL
+        SELECT a.id, a.name, a.phone, a.email, 'D'    
+        FROM contacts_changes_stream a 
+        WHERE a.METADATA$ACTION = 'DELETE' and a.METADATA$ISUPDATE='False'
+          AND NOT EXISTS ( SELECT '1' FROM contacts_changes_stream b
+                           WHERE b.METADATA$ACTION = 'INSERT' and b.METADATA$ISUPDATE='False'
+                             AND a.id = b.id)
+        UNION ALL
+        SELECT a.id, a.name, a.phone, a.email, 'U'    
+        FROM contacts_changes_stream a 
+        WHERE a.METADATA$ACTION = 'INSERT' and a.METADATA$ISUPDATE='True';
+    
+    
+    CREATE OR REPLACE SECURE VIEW contact_raw_sec_view (id, name, phone, email, rec_status) 
+    AS
+        SELECT a.id, a.name, a.phone, a.email, 'I'    
+        FROM contacts_changes_stream a 
+        WHERE (a.METADATA$ACTION = 'INSERT' and a.METADATA$ISUPDATE='False') 
+        UNION ALL
+        SELECT a.id, a.name, a.phone, a.email, 'D'    
+        FROM contacts_changes_stream a 
+        WHERE a.METADATA$ACTION = 'DELETE' and a.METADATA$ISUPDATE='False'
+          AND NOT EXISTS ( SELECT '1' FROM contacts_changes_stream b
+                           WHERE b.METADATA$ACTION = 'INSERT' and b.METADATA$ISUPDATE='False'
+                             AND a.id = b.id)
+        UNION ALL
+        SELECT a.id, a.name, a.phone, a.email, 'U'    
+        FROM contacts_changes_stream a 
+        WHERE a.METADATA$ACTION = 'INSERT' and a.METADATA$ISUPDATE='True';
+    
+    -- Update the master contacts table
+    
+    CREATE OR REPLACE PROCEDURE update_contacts ()
+    RETURNS VARCHAR
+    LANGUAGE javascript
+    AS
+    $$
+        snowflake.execute( { sqlText :
+            `MERGE INTO contacts c USING contact_raw_view cv
+            ON c.id = cv.id
+            WHEN matched AND cv.rec_status = 'U'
+            THEN UPDATE
+            SET  c.email = cv.email ,
+                 c.phone = cv.phone
+            WHEN matched AND cv.rec_status = 'D'
+            THEN DELETE
+            WHEN NOT MATCHED AND cv.rec_status = 'I'
+            THEN INSERT
+             (c.id, c.name, c.email, c.phone) VALUES
+              (cv.id, cv.name, cv.email, cv.phone)`
+        });
+    $$
+    ;
+
+    -- ELT using Streams
+
+    CREATE OR REPLACE PROCEDURE load_and_transform_contacts ()
+    RETURNS VARCHAR
+    LANGUAGE javascript
+    AS
+    $$
+        snowflake.execute( { sqlText : `call load_contact_stg()` });
+        snowflake.execute( { sqlText : `call update_contacts()` });
+    $$
+    ;
+    
+    -- invoking procedure
+    call load_and_transform_contacts();
+    
+-- Execute the following steps for enabling the ds_1 user to clone an entire database.
 
     GRANT CREATE DATABASE ON ACCOUNT TO ROLE data_science;
     GRANT CREATE TABLE ON schema int TO ROLE data_science;
-    GRANT SELECT ON TABLE CONTACTS_RAW TO ROLE data_science;
     GRANT USAGE ON DATABASE integration_db TO ROLE data_science;
-    GRANT USAGE ON SCHEMA int TO ROLE data_science;
+    GRANT SELECT ON TABLE CONTACTS_RAW TO ROLE data_science;
+    GRANT SELECT ON TABLE JSON_RAW TO ROLE data_science;
+    GRANT USAGE ON TABLE JSON_RAW TO ROLE data_science;
+    
+    GRANT ALL ON TABLE JSON_RAW TO ROLE data_science;
+    GRANT SELECT ON TABLE STAGE JSON_RAW TO ROLE data_science;
+    GRANT SELECT ON TABLE CONTACTS TO ROLE data_science;
+    GRANT SELECT ON STREAM contacts_changes_stream TO ROLE data_science;
+    GRANT USAGE ON SCHEMA int TO ROLE data_science;    
+    GRANT USAGE ON FILE FORMAT JSON_FILE_FORMAT TO ROLE data_science;
+    GRANT USAGE ON PROCEDURE update_contacts() TO ROLE data_science;
+    GRANT OWNERSHIP ON json_raw TO data_science REVOKE CURRENT GRANTS;    
+    GRANT SELECT ON VIEW contact_raw_view TO  ROLE data_science;
+    GRANT SELECT ON VIEW contact_raw_sec_view TO  ROLE data_science;
 
 -- Login as secondary user with the data_science role and issue the clone command with create database stmt.
 
@@ -901,11 +1055,20 @@ DROP schema timetravel;
     use WAREHOUSE COMPUTE_WH;
     
     select * from contacts_raw;
+    
+    select * from contacts;
 
     DROP database cloned_int_db;
 
     -- Login as primary user
+    
+    use role accountadmin;
+    
     DROP DATABASE integration_db;
+
+    drop role DATA_SCIENCE;
+
+    drop user ds_1;
 
 --------------------------------------------------------------------------------------------------------
 
@@ -1159,3 +1322,7 @@ DROP schema timetravel;
         
       
         SELECT * from table(get_contacts());
+        
+---------------------------------------------------------------------------------------------------------
+
+
