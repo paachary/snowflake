@@ -146,7 +146,7 @@ GRANT SELECT ON customer TO ROLE DEVELOPER;
 
 -------------------------------------------------------------------------
 
-CLUSTERING
+--CLUSTERING
 
 CREATE OR REPLACE WAREHOUSE performance_test warehouse_size = LARGE;
 
