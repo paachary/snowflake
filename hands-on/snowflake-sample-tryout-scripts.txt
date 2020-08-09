@@ -1332,4 +1332,16 @@ DROP schema timetravel;
         
 ---------------------------------------------------------------------------------------------------------
 
+insert into movies_new
+(
+with movies (movie_id, movie_title, genre) as
+( select $1, $2, $3 from movies_raw ),
+movies_split as (
+select movie_id,
+regexp_substr(movie_title,'\\([[:digit:]]+\\)') as year,
+replace(trim(strtok(year,'(',1)),')','') as release_year,
+NVL(regexp_replace(movie_title,'\\('||release_year||'\\)',''),movie_title)  as title,
+split(genre,'|') as genres
+from movies)
+select movie_id, title,release_year, genres from movies_split);
 
