@@ -1345,3 +1345,9 @@ split(genre,'|') as genres
 from movies)
 select movie_id, title,release_year, genres from movies_split);
 
+select distinct movie_id, title as genre from MOVIES_NEW m,
+lateral flatten(input => genres) 
+// we can specify the datatype in the where condition as well
+where  value::string in('Comedy', 'Romance') 
+and RELEASE_YEAR = 2018;
+
