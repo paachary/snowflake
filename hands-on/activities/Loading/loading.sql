@@ -62,7 +62,7 @@ CREATE TABLE <corp_id>_people
     weight_lbs NUMBER    
 ); 
 
--- Use the GUI to load the file into the target table.
+-- Use the GUI to load the "people" file into the target table.
 -- Note that when file is getting uploaded via internal stages, snowflake automatically compresses and encrypts the file.
 -- All data in snowflake is encrypted.
 
@@ -89,7 +89,7 @@ CREATE TABLE <corp_id>_sales
 -- All data in snowflake is encrypted.
 
 -- Once uploaded, query the target table. The table contains one column which holds each record.
-SELECT * FROM sales;
+SELECT * FROM <corp_id>_sales;
 
 -- To access top level attributes and scalar attributes from the sales table, we can use javascript notation (:) as shown below.
 SELECT sales_info:price,
